@@ -46,31 +46,6 @@ void ConfigureUART(void)
 }
 
 
-void ConfigureADC(void)
-{
-	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
-	ROM_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3);
-
-	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
-	ADCIntDisable(ADC0_BASE, 0);
-
-	ADCSequenceConfigure(ADC0_BASE, 0, ADC_TRIGGER_PROCESSOR, 0);
-	ADCSequenceConfigure(ADC0_BASE, 1, ADC_TRIGGER_PROCESSOR, 1);
-	ADCSequenceConfigure(ADC0_BASE, 2, ADC_TRIGGER_PROCESSOR, 2);
-	ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_PROCESSOR, 3);
-
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 0, ADC_CTL_CH0);
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 1, ADC_CTL_CH0);
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 2, ADC_CTL_CH0);
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 3, ADC_CTL_CH0);
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 4, ADC_CTL_CH0);
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 5, ADC_CTL_CH0);
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 6, ADC_CTL_CH0);
-	ADCSequenceStepConfigure(ADC0_BASE, 0, 7, ADC_CTL_CH0 | ADC_CTL_END);
-
-	ADCSequenceEnable(ADC0_BASE, 0);
-}
-
 void ConfigureI2C(void)
 {
 	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
@@ -83,39 +58,6 @@ void ConfigureI2C(void)
 	I2CMasterInitExpClk(I2C2_BASE, 100000, false);
 }
 
-void ConfigureBluART(void)
-{
-	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
-	ROM_GPIOPinConfigure(GPIO_PD4_U6RX);
-	ROM_GPIOPinConfigure(GPIO_PD5_U6TX);
-	ROM_GPIOPinTypeUART(GPIO_PORTD_BASE, GPIO_PIN_4 | GPIO_PIN_5);
-
-	// use 16MHz internal
-	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART6);
-	UARTClockSourceSet(UART6_BASE, UART_CLOCK_PIOSC);
-	UARTEnable(UART6_BASE);
-	UARTConfigSetExpClk(
-		UART6_BASE,
-		16000000,
-		115200,
-		UART_CONFIG_WLEN_8 | UART_CONFIG_PAR_NONE | UART_CONFIG_STOP_ONE);
-}
-
-void ConfigureBluGPIO(void)
-{
-	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-	
-	HWREG(GPIO_PORTF_BASE + GPIO_O_LOCK) = GPIO_LOCK_KEY;
-	HWREG(GPIO_PORTF_BASE + GPIO_O_CR) = 0xFF;
-	
-	ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_4);
-	ROM_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_4, GPIO_PIN_4);
-
-	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
-	ROM_GPIOPinTypeGPIOOutput(GPIO_PORTE_BASE, GPIO_PIN_1);
-	ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, GPIO_PIN_1);
-}
-
 int main(void)
 {
 	// Set the clocking to run at 50 MHz from the PLL.
@@ -123,10 +65,7 @@ int main(void)
 			   SYSCTL_XTAL_16MHZ | SYSCTL_OSC_MAIN);
 
 	ConfigureUART();
-	ConfigureADC();
 	ConfigureI2C();
-	ConfigureBluART();
-	ConfigureBluGPIO();
 
 	UARTprintf("\033[2J");
 	UARTprintf("\nStarting up...\n");

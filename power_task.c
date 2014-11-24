@@ -9,6 +9,8 @@
 #include "driverlib/rom.h"
 #include "driverlib/uart.h"
 #include "utils/uartstdio.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/rom_map.h"
 #include "power_task.h"
 #include "priorities.h"
 #include "FreeRTOS.h"
@@ -21,19 +23,20 @@
 #define BLUART_QUEUE_SIZE	64
 
 
-extern xSemaphoreHandle g_pUARTSemaphore;
+extern	xSemaphoreHandle g_pUARTSemaphore;
 
 
-volatile char g_BluARTRx[BLUART_QUEUE_SIZE];
-volatile uint32_t g_BluARTRxRH = 0;
-volatile uint32_t g_BluARTRxWH = 0;
+volatile	char g_BluARTRx[BLUART_QUEUE_SIZE];
+volatile	uint32_t g_BluARTRxRH = 0;
+volatile	uint32_t g_BluARTRxWH = 0;
 
-volatile char g_BluARTTx[BLUART_QUEUE_SIZE];
-volatile uint32_t g_BluARTTxRH = 0;
-volatile uint32_t g_BluARTTxWH = 0;
+volatile	char g_BluARTTx[BLUART_QUEUE_SIZE];
+volatile	uint32_t g_BluARTTxRH = 0;
+volatile	uint32_t g_BluARTTxWH = 0;
 
 
-static void BluARTRx()
+static void
+BluARTRx()
 {
 	while (UARTCharsAvail(UART6_BASE)) {
 		g_BluARTRx[g_BluARTRxWH] = (char) UARTCharGetNonBlocking(UART6_BASE);
@@ -41,7 +44,8 @@ static void BluARTRx()
 	}
 }
 
-static void BluARTTx()
+static void
+BluARTTx()
 {
 	while (UARTSpaceAvail(UART6_BASE) && g_BluARTTxRH != g_BluARTTxWH) {
 		UARTCharPutNonBlocking(UART6_BASE, g_BluARTTx[g_BluARTTxRH]);
@@ -49,7 +53,8 @@ static void BluARTTx()
 	}
 }
 
-static void BluARTInterrupt(void)
+static void
+BluARTInterrupt(void)
 {
 	UARTIntClear(UART6_BASE, 0);
 	BluARTRx();
@@ -59,7 +64,8 @@ static void BluARTInterrupt(void)
 		UARTIntDisable(UART6_BASE, UART_INT_TX);
 }
 
-static void BluARTPrimeTx(void)
+static void
+BluARTPrimeTx(void)
 {
 	// load TX bytes from BluART TX buffer until UART6 FIFO is full
 	UARTIntDisable(UART6_BASE, UART_INT_TX | UART_INT_RX);
@@ -67,7 +73,8 @@ static void BluARTPrimeTx(void)
 	UARTIntEnable(UART6_BASE, UART_INT_TX | UART_INT_RX);
 }
 
-static void BluARTFlushRx(void)
+static void
+BluARTFlushRx(void)
 {
 	// Load all RX bytes from UART6 FIFO to BluART RX buffer
 	UARTIntDisable(UART6_BASE, UART_INT_TX | UART_INT_RX);
@@ -75,7 +82,8 @@ static void BluARTFlushRx(void)
 	UARTIntEnable(UART6_BASE, UART_INT_TX | UART_INT_RX);
 }
 
-static int BluARTWait(char *str, int32_t ms)
+static int
+BluARTWait(char *str, int32_t ms)
 {
 	int32_t	 t = 0;
 	char	*p = str;
@@ -105,7 +113,8 @@ static int BluARTWait(char *str, int32_t ms)
 	return 0;
 }
 
-static void BluARTInteract()
+static void
+BluARTInteract()
 {
 	char	c;
 	
@@ -126,7 +135,8 @@ static void BluARTInteract()
 
 }
 
-static void BluARTSend(char *str)
+static void
+BluARTSend(char *str)
 {
 	// DEBUG
 	UARTprintf("\nSENDING \"%s\"\n", str);
@@ -138,7 +148,8 @@ static void BluARTSend(char *str)
 	BluARTPrimeTx();
 }
 
-static int BluARTConnect(void)
+static int
+BluARTConnect(void)
 {
 	// TODO: HW reset
 	
@@ -156,7 +167,7 @@ static int BluARTConnect(void)
 	
 	//BluARTSend("SR,92000000\r\n");
 	BluARTSend("SR,32000000\r\n");
-	if (BluARTWait("OK", 1000))
+	if (BluARTWait("AOK", 1000))
 		return -1;
 
 	BluARTSend("R,1\r");
@@ -172,7 +183,44 @@ static int BluARTConnect(void)
 	return 0;
 }
 
-static void PowerTask(void *pvParameters)
+
+void
+configBluART(void)
+{
+	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
+	ROM_GPIOPinConfigure(GPIO_PD4_U6RX);
+	ROM_GPIOPinConfigure(GPIO_PD5_U6TX);
+	ROM_GPIOPinTypeUART(GPIO_PORTD_BASE, GPIO_PIN_4 | GPIO_PIN_5);
+
+	// use 16MHz internal
+	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART6);
+	UARTClockSourceSet(UART6_BASE, UART_CLOCK_PIOSC);
+	UARTEnable(UART6_BASE);
+	UARTConfigSetExpClk(
+		UART6_BASE,
+		16000000,
+		115200,
+		UART_CONFIG_WLEN_8 | UART_CONFIG_PAR_NONE | UART_CONFIG_STOP_ONE);
+}
+
+void
+configBluGPIO(void)
+{
+	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+	
+	HWREG(GPIO_PORTF_BASE + GPIO_O_LOCK) = GPIO_LOCK_KEY;
+	HWREG(GPIO_PORTF_BASE + GPIO_O_CR) = 0xFF;
+	
+	ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_4);
+	ROM_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_4, GPIO_PIN_4);
+
+	ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+	ROM_GPIOPinTypeGPIOOutput(GPIO_PORTE_BASE, GPIO_PIN_1);
+	ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, GPIO_PIN_1);
+}
+
+static void
+PowerTask(void *pvParameters)
 {
 	portTickType LastTime;
 	uint32_t PowerDelay = 25;
@@ -217,8 +265,12 @@ static void PowerTask(void *pvParameters)
 	}
 }
 
-uint32_t PowerTaskInit(void)
+uint32_t
+PowerTaskInit(void)
 {
+	configBluART();
+	configBluGPIO();
+
 	UARTIntRegister(UART6_BASE, BluARTInterrupt);
 	//UARTFIFOLevelSet(UART6_BASE, UART_FIFO_TX1_2, UART_FIFO_RX1_2);
 	UARTIntEnable(UART6_BASE, UART_INT_TX | UART_INT_RX);
