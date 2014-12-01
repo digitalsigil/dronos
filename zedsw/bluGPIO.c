@@ -14,6 +14,7 @@
 
 #define FAST_TIMEOUT 3
 #define BLUART_DEV "/dev/ttyPS1"
+#define COPTER_MAC "001EC01B173B"
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 
@@ -108,7 +109,8 @@ readStrBluART(int fd, char *s, time_t timeout)
 	m = s;
 	while (*m != '\0') {
 		read(fd, &b, sizeof (b));
-		if (debug) printf(isgraph(b) ? "%c" : "\\%03o", b);
+		//if (debug) printf(isgraph(b) ? "%c" : "\\%03o", b);
+		printf("\nreadStrBluART: %s", m);
 
 		if (*m++ != b)
 			m = s;
@@ -152,19 +154,14 @@ scanDevBluART(int fd, char *d, int scantime)
 }
 
 int
-connectDevBluART(int fd, char *d)
+connectDevBluART(int fd, char *d, int timeout)
 {
-	int found = 0;
-
-
-	if (readStrBluART(fd, d, timeout) == 0)
-		found = 1;
-
-	writeStrBluART(fd, "X\n");
-	if (readStrBluART(fd, "AOK", FAST_TIMEOUT) != 0)
+	writeStrBluART(fd, "E,0,");
+	writeStrBluART(fd, d);
+	writeStrBluART(fd, "\n");
+	if (readStrBluART(fd, "AOK", timeout) != 0)
 		return -1;
-
-	return found ? 0 : -1;
+	return 0;
 }
 
 int
@@ -172,19 +169,28 @@ main(int argc, char **argv)
 {
 	int	fd;
 
+	if (debug) printf("main: start\n");
 	if ((fd = openBluART(BLUART_DEV)) == -1)
 		err(1, "Couldn't open" BLUART_DEV);
+	if (debug) printf("main: opened dev\n");
 
 	writeStrBluART(fd, "+\n");
-	readStrBluART(fd, "Echo", 5);
+	readStrBluART(fd, "Echo", FAST_TIMEOUT);
 	writeStrBluART(fd, "SF,1\n");
-	readStrBluART(fd, "AOK", 5);
+	readStrBluART(fd, "AOK", FAST_TIMEOUT);
 	writeStrBluART(fd, "SS,C0000000\n");
-	readStrBluART(fd, "AOK", 5);
+	readStrBluART(fd, "AOK", FAST_TIMEOUT);
 	writeStrBluART(fd, "SR,92000000\n");
-	readStrBluART(fd, "AOK", 5);
+	readStrBluART(fd, "AOK", FAST_TIMEOUT);
+
 	writeStrBluART(fd, "R,1\n");
-	readStrBluART(fd, "CMD", 5);
+	readStrBluART(fd, "CMD", 10);
+
+	scanDevBluART(fd, COPTER_MAC, 10);
+	connectDevBluART(fd, COPTER_MAC, 10);
+
+	writeStrBluART(fd, "I\n");
+	readStrBluART(fd, "MLDP", FAST_TIMEOUT);
 
 	return 0;
 }
