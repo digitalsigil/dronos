@@ -65,7 +65,7 @@ int main(void)
 			   SYSCTL_XTAL_16MHZ | SYSCTL_OSC_MAIN);
 
 	ConfigureUART();
-	ConfigureI2C();
+	//ConfigureI2C();
 
 	UARTprintf("\033[2J");
 	UARTprintf("\nStarting up...\n");
