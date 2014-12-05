@@ -21,9 +21,8 @@
 #define VISIONTASKSTACKSIZE	128	// in words
 #define ADCqSIZE		256
 #define SEEqSIZE		32
-#define CLEAR_BITS		16
-#define SIGNAL_BITS		8
-#define ADC_THRESH		1000
+#define TRIG_BITS		4
+#define ADC_THRESH		2300
 
 
 extern	xSemaphoreHandle g_pUARTSemaphore;
@@ -33,29 +32,41 @@ static	volatile uint16_t ADCq[ADCqSIZE];
 static	volatile uint32_t ADCqWH = 0;
 static	volatile uint32_t ADCqRH = 0;
 
-static	volatile uint32_t sample_count = 0;
-
 volatile	uint32_t SEEq[SEEqSIZE];
 static volatile	uint32_t SEEqWH = 0;
 volatile	uint32_t SEEqRH = 0;
 
 
+//1. detect edge; set length to time of certain edge
+//2. 
 static void
 ADCInterrupt(void)
 {
+	static	uint32_t last = 0;
+	static	uint32_t sb = 0;
+	static	uint32_t sc = 0;
 	uint32_t	b[8];
-	uint8_t		i;
+	uint32_t	i;
 
 	ADCIntClear(ADC0_BASE, 0);
 	ADCSequenceDataGet(ADC0_BASE, 0, b);
 
-	i = 0;
-	for (i = 0; i < 8; i++) {
-		ADCq[ADCqWH] = b[i];
-		ADCqWH = (ADCqWH + 1) % ADCqSIZE;
+	for (i = 0; i < 8; i++)
+		sb = (sb << 1) | (b[i] < ADC_THRESH);
+	
+	if (~sb == 0 && !last) {
+		last = 1;
+		sc = 32;
+	} else if (sb == 0 && last) {
+		last = 0;
+		sc = 32;
 	}
 	
-	sample_count++;
+	// write byte
+	if (++sc % 128 == 0) {
+		ADCq[ADCqWH] = last;
+		ADCqWH = (ADCqWH + 1) % ADCqSIZE;
+	}
 }
 
 static void
@@ -63,26 +74,43 @@ decodeADC(void)
 {
 	static	uint32_t data = 0;
 	static	uint8_t bits = 0;
-	static	uint8_t clear_bits = 0;
+	static	uint8_t trig_bits = 0;
+	static	uint8_t need_trig = 1;
 	
 	uint32_t	b;
 	
 	while (ADCqRH != ADCqWH) {
-		b = ADCq[ADCqRH] > ADC_THRESH ? 0 : 1;
+		//b = ADCq[ADCqRH] > ADC_THRESH ? 0 : 1;
+		b = ADCq[ADCqRH];
 		ADCqRH = (ADCqRH + 1) % ADCqSIZE;
 		
-		clear_bits = b ? clear_bits + 1 : 0;
+		if (need_trig) {
+			if (trig_bits >= TRIG_BITS) {
+				if (b) {
+					trig_bits = TRIG_BITS;
+					continue;
+				} else {
+					need_trig = 0;
+				}
+			} else {
+				if (b) {
+					trig_bits++;
+					continue;
+				} else {
+					trig_bits = 0;
+					continue;
+				}
+			}
+		}
+		
 		data = (data << 1) | b;
 		bits++;
 
-		if (bits == 32 || clear_bits == CLEAR_BITS) {
-			if (data > 0) {
-				SEEq[SEEqWH] = data;
-				SEEqWH = (SEEqWH + 1) % SEEqSIZE;
-			}
-			
-			data = bits = clear_bits = 0;
-			data = 1;
+		if (bits == 8) {
+			SEEq[SEEqWH] = data;
+			SEEqWH = (SEEqWH + 1) % SEEqSIZE;
+			data = bits = trig_bits = 0;
+			need_trig = 1;
 		}
 	}
 }
@@ -93,22 +121,41 @@ VisionTask(void *pvParameters)
 	portTickType	LastTime;
 	//uint32_t	VisionDelay = 25;
 	uint32_t	VisionDelay = 500;
+	uint32_t	n, c;
 	
-	uint32_t	lsc = 0;
-
 	// Get the current tick count.
 	LastTime = xTaskGetTickCount();
 
+	n = 0;
 	while (1) {
-		decodeADC();
-
 		xSemaphoreTake(g_pUARTSemaphore, portMAX_DELAY);
-		UARTprintf("%d\n", (sample_count - lsc) * 8);
-		lsc = sample_count;
-		//while (SEEqRH != SEEqWH) {
-		//	UARTprintf("0x%x\n", SEEq[SEEqRH]);
-		//	SEEqRH = (SEEqRH + 1) % SEEqSIZE;
-		//}
+		
+		decodeADC();
+		n = 0;
+		while (SEEqRH != SEEqWH) {
+
+			UARTprintf("%032x\n", SEEq[SEEqRH]);
+			SEEqRH = (SEEqRH + 1) % SEEqSIZE;
+		}
+
+		/*
+		while (ADCqRH != ADCqWH) {
+			if(ADCq[ADCqRH]) c++;
+			else c = 0;
+			
+			UARTprintf("%s%s",
+				ADCq[ADCqRH] ? "#" : ".",
+				++n % 128 == 0 ? "\n" : "");
+				
+			if (c == 4) {
+				n = 0;
+				c = 0;
+				UARTprintf("\n");
+			}
+			ADCqRH = (ADCqRH + 1) % ADCqSIZE;
+		}
+		*/
+
 		xSemaphoreGive(g_pUARTSemaphore);
 
 		vTaskDelayUntil(&LastTime, VisionDelay / portTICK_RATE_MS);
@@ -133,9 +180,7 @@ initADC(void)
 		ADCSequenceStepConfigure(ADC0_BASE, 0, i, ADC_CTL_CH0 | opt);
 	}
 
-	ADCClockConfigSet(ADC0_BASE, ADC_CLOCK_SRC_PIOSC | ADC_CLOCK_RATE_EIGHTH, 1);
-	ADCSoftwareOversampleConfigure(ADC0_BASE, 0, 8);
-	//ADCClockConfigSet(ADC0_BASE, ADC_CLOCK_SRC_PIOSC | ADC_CLOCK_RATE_HALF, 1);
+	ADCClockConfigSet(ADC0_BASE, ADC_CLOCK_SRC_PIOSC | ADC_CLOCK_RATE_HALF, 1);
 	
 	ADCIntRegister(ADC0_BASE, 0, ADCInterrupt);
 	ADCIntEnable(ADC0_BASE, 0);
