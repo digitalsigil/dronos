@@ -21,7 +21,8 @@
 #define VISIONTASKSTACKSIZE	128	// in words
 #define ADCqSIZE		256
 #define SEEqSIZE		32
-#define TRIG_BITS		4
+#define TRIG_BITCOUNT		4
+#define DATA_BITCOUNT		8
 #define ADC_THRESH		2300
 
 
@@ -37,23 +38,22 @@ static volatile	uint32_t SEEqWH = 0;
 volatile	uint32_t SEEqRH = 0;
 
 
-//1. detect edge; set length to time of certain edge
-//2. 
 static void
 ADCInterrupt(void)
 {
 	static	uint32_t last = 0;
 	static	uint32_t sb = 0;
 	static	uint32_t sc = 0;
+	
 	uint32_t	b[8];
 	uint32_t	i;
 
+	// update shift buffer
 	ADCIntClear(ADC0_BASE, 0);
 	ADCSequenceDataGet(ADC0_BASE, 0, b);
-
-	for (i = 0; i < 8; i++)
-		sb = (sb << 1) | (b[i] < ADC_THRESH);
+	for (i = 0; i < 8; i++)	sb = (sb << 1) | (b[i] < ADC_THRESH);
 	
+	// check for edge. If detected, it has been 32 cycles.
 	if (~sb == 0 && !last) {
 		last = 1;
 		sc = 32;
@@ -62,8 +62,8 @@ ADCInterrupt(void)
 		sc = 32;
 	}
 	
-	// write byte
-	if (++sc % 128 == 0) {
+	// if BIT_TIME cycles have elapsed, acknowledge a new bit
+	if (sc++ % 128 == 0) {
 		ADCq[ADCqWH] = last;
 		ADCqWH = (ADCqWH + 1) % ADCqSIZE;
 	}
@@ -72,46 +72,45 @@ ADCInterrupt(void)
 static void
 decodeADC(void)
 {
-	static	uint32_t data = 0;
+	static	uint32_t d = 0;
 	static	uint8_t bits = 0;
 	static	uint8_t trig_bits = 0;
-	static	uint8_t need_trig = 1;
+	static	uint8_t triggering = 1;
 	
 	uint32_t	b;
 	
 	while (ADCqRH != ADCqWH) {
-		//b = ADCq[ADCqRH] > ADC_THRESH ? 0 : 1;
 		b = ADCq[ADCqRH];
 		ADCqRH = (ADCqRH + 1) % ADCqSIZE;
 		
-		if (need_trig) {
-			if (trig_bits >= TRIG_BITS) {
+		// demand a sequence of at least TRIG_BITCOUNT
+		if (triggering) {
+			if (trig_bits >= TRIG_BITCOUNT) {
 				if (b) {
-					trig_bits = TRIG_BITS;
+					trig_bits = TRIG_BITCOUNT;
 					continue;
-				} else {
-					need_trig = 0;
 				}
+				triggering = 0;
 			} else {
-				if (b) {
-					trig_bits++;
-					continue;
-				} else {
-					trig_bits = 0;
-					continue;
-				}
+				if (b)	trig_bits++;
+				else	trig_bits = 0;
+				
+				continue;
 			}
 		}
 		
-		data = (data << 1) | b;
+		// record DATA_BITCOUNT bits into the data byte
+		d = (d << 1) | b;
 		bits++;
-
-		if (bits == 8) {
-			SEEq[SEEqWH] = data;
-			SEEqWH = (SEEqWH + 1) % SEEqSIZE;
-			data = bits = trig_bits = 0;
-			need_trig = 1;
-		}
+		if (bits < DATA_BITCOUNT)	continue;
+		
+		// send the data byte to SEEq
+		SEEq[SEEqWH] = d;
+		SEEqWH = (SEEqWH + 1) % SEEqSIZE;
+		
+		// put back into triggering mode and wait for more data
+		d = bits = trig_bits = 0;
+		triggering = 1;
 	}
 }
 
@@ -126,14 +125,12 @@ VisionTask(void *pvParameters)
 	// Get the current tick count.
 	LastTime = xTaskGetTickCount();
 
-	n = 0;
+	c = n = 0;
 	while (1) {
 		xSemaphoreTake(g_pUARTSemaphore, portMAX_DELAY);
 		
 		decodeADC();
-		n = 0;
 		while (SEEqRH != SEEqWH) {
-
 			UARTprintf("%032x\n", SEEq[SEEqRH]);
 			SEEqRH = (SEEqRH + 1) % SEEqSIZE;
 		}
@@ -147,7 +144,7 @@ VisionTask(void *pvParameters)
 				ADCq[ADCqRH] ? "#" : ".",
 				++n % 128 == 0 ? "\n" : "");
 				
-			if (c == 4) {
+			if (c == TRIG_BITCOUNT) {
 				n = 0;
 				c = 0;
 				UARTprintf("\n");
