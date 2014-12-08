@@ -74,8 +74,8 @@ int main(void)
 
 	if (VisionTaskInit() != 0)
 		while (1);
-	//if (PowerTaskInit() != 0)
-	//	while (1);
+	if (PowerTaskInit() != 0)
+		while (1);
 	
 	vTaskStartScheduler();
 	while (1);

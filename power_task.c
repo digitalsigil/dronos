@@ -56,9 +56,13 @@ BluARTTx()
 static void
 BluARTInterrupt(void)
 {
-	UARTIntClear(UART6_BASE, 0);
-	BluARTRx();
-	BluARTTx();
+	uint32_t	ris;
+	
+	ris = UARTIntStatus(UART6_BASE, false);
+	UARTIntClear(UART6_BASE, UART_INT_RX | UART_INT_TX);
+	
+	if (ris & UART_INT_RX)	BluARTRx();
+	if (ris & UART_INT_TX)	BluARTTx();
 	
 	if (g_BluARTTxRH == g_BluARTTxWH)
 		UARTIntDisable(UART6_BASE, UART_INT_TX);
@@ -100,10 +104,7 @@ BluARTWait(char *str, int32_t ms)
 			c = (int8_t) g_BluARTRx[g_BluARTRxRH];
 			g_BluARTRxRH = (g_BluARTRxRH + 1) % BLUART_QUEUE_SIZE;
 			
-			if (c != *p)
-				p = str;
-			else
-				p++;
+			if (c != *p++)	p = str;
 		}
 		vTaskDelay(10 / portTICK_RATE_MS);
 		t += 10;
@@ -117,22 +118,20 @@ static void
 BluARTInteract()
 {
 	char	c;
-	
-	while (1) {
-		BluARTFlushRx();
-		while (g_BluARTRxWH != g_BluARTRxRH) {
-			c = (int8_t) g_BluARTRx[g_BluARTRxRH];
-			g_BluARTRxRH = (g_BluARTRxRH + 1) % BLUART_QUEUE_SIZE;
-			UARTprintf("%c", c);
-		}
-		
-		while (UARTCharsAvail(UART0_BASE)) {
-			g_BluARTTx[g_BluARTTxWH] = (int8_t) UARTCharGetNonBlocking(UART0_BASE);
-			g_BluARTTxWH = (g_BluARTTxWH + 1) % BLUART_QUEUE_SIZE;
-		}
-		BluARTPrimeTx();
+
+	BluARTFlushRx();
+	while (g_BluARTRxWH != g_BluARTRxRH) {
+		c = (int8_t) g_BluARTRx[g_BluARTRxRH];
+		g_BluARTRxRH = (g_BluARTRxRH + 1) % BLUART_QUEUE_SIZE;
+		UARTprintf("%c", c);
 	}
 
+	while (UARTCharsAvail(UART0_BASE)) {
+		UARTprintf("%d %d\n", g_BluARTTxRH, g_BluARTTxWH);
+		g_BluARTTx[g_BluARTTxWH] = (int8_t) UARTCharGetNonBlocking(UART0_BASE);
+		g_BluARTTxWH = (g_BluARTTxWH + 1) % BLUART_QUEUE_SIZE;
+	}
+	BluARTPrimeTx();
 }
 
 static void
@@ -156,30 +155,30 @@ BluARTConnect(void)
 	if (BluARTWait("CMD", 1000))
 		return -1;
 	
-	BluARTSend("+\r\n");
+	BluARTSend("+\n");
 	if (BluARTWait("Echo", 1000))
 		return -1;
 	
-	//BluARTSend("SS,C0000000\r\n");
-	BluARTSend("SS,30000000\r\n");
+	BluARTSend("SS,30000000\n");
 	if (BluARTWait("AOK", 1000))
 		return -1;
 	
-	//BluARTSend("SR,92000000\r\n");
-	BluARTSend("SR,32000000\r\n");
+	//BluARTSend("SR,92000000\n");
+	BluARTSend("SR,32000000\n");
 	if (BluARTWait("AOK", 1000))
 		return -1;
 
-	BluARTSend("R,1\r");
+	BluARTSend("R,1\n");
 	if (BluARTWait("CMD", 10000))
 		return -1;
 
-	BluARTInteract();
-	
-	BluARTSend("I\r");
-	if (BluARTWait("OK", 1000))
+	if (BluARTWait("Connected", 10000000))
 		return -1;
 
+	BluARTSend("I\n");
+	if (BluARTWait("MLDP", 10000))
+		return -1;
+		
 	return 0;
 }
 
@@ -229,37 +228,24 @@ PowerTask(void *pvParameters)
 	LastTime = xTaskGetTickCount();
 
 	UARTprintf("attempt to connect...\n");
-	//if (BluARTConnect())
-	//	UARTprintf("connection failed!\n");
+	if (BluARTConnect())
+		UARTprintf("connection failed!\n");
 	while (1) {
-		/*
-		   while (UARTCharsAvail(UART0_BASE)) {
-			   g_BluARTTx[g_BluARTTxWH] = (int8_t) UARTgetc();
-			   g_BluARTTxWH = (g_BluARTTxWH + 1) % BLUART_QUEUE_SIZE;
-		   }
-		   BluARTPrimeTx();
-
-		   xSemaphoreTake(g_pUARTSemaphore, portMAX_DELAY);
-		   while (g_BluARTRxWH != g_BluARTRxRH) {
-			   c = (int8_t) g_BluARTRx[g_BluARTRxRH];
-			   g_BluARTRxRH = (g_BluARTRxRH + 1) % BLUART_QUEUE_SIZE;
-			   UARTwrite((const char *) &c, 1);
-		   }
-		   BluARTFlushRx();
-		   xSemaphoreGive(g_pUARTSemaphore);
-		   
-		   xSemaphoreTake(g_pUARTSemaphore, portMAX_DELAY);
-		   if (I2CMasterBusy(I2C2_BASE) != pdTRUE) {
-		   UARTprintf("free\n");
-		   I2CMasterSlaveAddrSet(I2C2_BASE, 0, true);
-		   I2CMasterDataPut(I2C2_BASE, 0x80);
-		   I2CMasterControl(I2C2_BASE, I2C_MASTER_CMD_FIFO_SINGLE_SEND);
-		   } else {
-		   I2CMasterDataGet(I2C2_BASE);
-		   UARTprintf("busy\n");
-		   }
-		   xSemaphoreGive(g_pUARTSemaphore);
-		 */
+		BluARTInteract();
+		
+		/*		   
+		xSemaphoreTake(g_pUARTSemaphore, portMAX_DELAY);
+		if (I2CMasterBusy(I2C2_BASE) != pdTRUE) {
+		UARTprintf("free\n");
+		I2CMasterSlaveAddrSet(I2C2_BASE, 0, true);
+		I2CMasterDataPut(I2C2_BASE, 0x80);
+		I2CMasterControl(I2C2_BASE, I2C_MASTER_CMD_FIFO_SINGLE_SEND);
+		} else {
+		I2CMasterDataGet(I2C2_BASE);
+		UARTprintf("busy\n");
+		}
+		xSemaphoreGive(g_pUARTSemaphore);
+		*/
 
 		vTaskDelayUntil(&LastTime, PowerDelay / portTICK_RATE_MS);
 	}
