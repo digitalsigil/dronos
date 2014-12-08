@@ -17,59 +17,7 @@
 #define COPTER_MAC "001EC01B173B"
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
-
-struct gpio {
-	char	*root;
-};
-
-
 int debug = 1;
-
-
-struct	gpio *initGPIO(char *);
-void	freeGPIO(struct gpio *);
-void	setupGPIOpin(int, int);
-void	writeGPIOpin(int, int);
-
-
-struct gpio *
-initGPIOpin(char *root)
-{
-	struct	gpio *rv;
-	int	n;
-	
-	if ((rv = malloc(sizeof (struct gpio))) == NULL)
-		goto error;
-	
-	n = strlen(root) + 1;
-	if ((rv->root = malloc(n * sizeof (char))) == NULL)
-		goto error;
-	strncpy(rv->root, root, n);
-	
-	return rv;
-
-error:
-	if (rv == NULL)
-		return NULL;
-
-	if (rv->root != NULL)
-		free(rv->root);
-	free(rv);
-	return NULL;
-}
-
-void
-freeGPIO(struct gpio * g)
-{
-	free(g->root);
-	free(g);
-}
-
-void
-setupGPIOpin(int pin, int dir)
-{
-	
-}
 
 int
 openBluART(char *dev)
@@ -79,6 +27,8 @@ openBluART(char *dev)
 
 	if ((fd = open(dev, O_RDWR, 0)) == -1)
 		return -1;
+
+	fcntl(fd, F_SETFL, FNDELAY);
 
 	if (tcgetattr(fd, &ti) == -1)
 		return -1;
@@ -102,15 +52,16 @@ readStrBluART(int fd, char *s, time_t timeout)
 	char	b;
 	char	*m;
 	time_t	t0;
+	int	rv;
 	
 	t0 = time(NULL);
 
 	if (debug) printf("readStrBluART: \"");
 	m = s;
 	while (*m != '\0') {
-		read(fd, &b, sizeof (b));
+		while (read(fd, &b, sizeof (b)) <= 0);
 		//if (debug) printf(isgraph(b) ? "%c" : "\\%03o", b);
-		printf("\nreadStrBluART: %s", m);
+		if (debug) printf("\nreadStrBluART: \"%c\" %s", b, m);
 
 		if (*m++ != b)
 			m = s;
@@ -129,6 +80,8 @@ void
 writeStrBluART(int fd, char *s)
 {
 	int	n;
+
+	if (debug) printf("writeStrBluART: \"%s\"\n", s);
 
 	n = strlen(s);
 	while (n > 0)	n -= write(fd, s, n);
@@ -161,11 +114,13 @@ connectDevBluART(int fd, char *d, int timeout)
 	writeStrBluART(fd, "\n");
 	if (readStrBluART(fd, "AOK", timeout) != 0)
 		return -1;
+	readStrBluART(fd, "Connected", 10);
+		return -1;
 	return 0;
 }
 
 int
-main(int argc, char **argv)
+connectBluART()
 {
 	int	fd;
 
@@ -176,15 +131,20 @@ main(int argc, char **argv)
 
 	writeStrBluART(fd, "+\n");
 	readStrBluART(fd, "Echo", FAST_TIMEOUT);
+
 	writeStrBluART(fd, "SF,1\n");
 	readStrBluART(fd, "AOK", FAST_TIMEOUT);
+
 	writeStrBluART(fd, "SS,C0000000\n");
 	readStrBluART(fd, "AOK", FAST_TIMEOUT);
+
 	writeStrBluART(fd, "SR,92000000\n");
 	readStrBluART(fd, "AOK", FAST_TIMEOUT);
 
 	writeStrBluART(fd, "R,1\n");
 	readStrBluART(fd, "CMD", 10);
+
+	printf("bluetooth ready\n");
 
 	scanDevBluART(fd, COPTER_MAC, 10);
 	connectDevBluART(fd, COPTER_MAC, 10);
@@ -192,5 +152,34 @@ main(int argc, char **argv)
 	writeStrBluART(fd, "I\n");
 	readStrBluART(fd, "MLDP", FAST_TIMEOUT);
 
-	return 0;
+	printf("got connection\n");
+
+	return fd;
 }
+
+unsigned int
+nextTaggedTile(int fd)
+{
+	char c;
+	int rv;
+
+	rv = read(fd, &c, 1);
+	
+	return rv <= 0 ? -1 : (int) c;
+}
+
+//int main (int argc, char **argv)
+//{
+//	int fd;
+//	int tile;
+//
+//	fd = connectBluART();
+//
+//	while (1) {
+//		do {
+//			tile = nextTaggedTile(fd);
+//			printf("%d\n", tile);
+//		} while (tile != -1);
+//		sleep(2);
+//	}
+//}
